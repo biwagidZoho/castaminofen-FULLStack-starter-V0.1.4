@@ -63,9 +63,10 @@ export class SearchService {
   constructor(private readonly prisma: PrismaService) {
     const meiliHost = this.config.get<string>('MEILISEARCH_HOST');
     if (meiliHost) {
+      const apiKey = this.config.get<string>('MEILISEARCH_API_KEY');
       this.meiliClient = new Meilisearch({
         host: meiliHost,
-        apiKey: this.config.get<string>('MEILISEARCH_API_KEY'),
+        ...(apiKey ? { apiKey } : {}),
       });
       this.useMeili = true;
     } else {
@@ -161,6 +162,12 @@ export class SearchService {
       }
 
       await this.recordRecentSearch(options.userId, normalizedQuery);
+      const analyticsFilters: Pick<SearchQueryOptions, 'type' | 'categoryId' | 'channelId'> = {
+        ...(options.type !== undefined ? { type: options.type } : {}),
+        ...(options.categoryId !== undefined ? { categoryId: options.categoryId } : {}),
+        ...(options.channelId !== undefined ? { channelId: options.channelId } : {}),
+      };
+
       await this.recordSearchAnalytics(
         options.userId,
         normalizedQuery,
@@ -169,11 +176,7 @@ export class SearchService {
           ...results,
           suggestions: [],
         }),
-        {
-          type: options.type,
-          categoryId: options.categoryId,
-          channelId: options.channelId,
-        },
+        analyticsFilters,
       );
     }
 
@@ -260,7 +263,7 @@ export class SearchService {
     const filter = this.buildMeiliFilter(options);
     const tasks = selected.map(async ({ type, index }) => {
       const result = await this.meiliClient!.index(index).search<Record<string, unknown>>(query, {
-        filter,
+        ...(filter ? { filter } : {}),
         limit: options.limit,
         offset: options.page > 1 ? (options.page - 1) * options.limit : 0,
       });
@@ -462,11 +465,15 @@ export class SearchService {
 
   private async autocompleteWithMeilisearch(query: string, limit: number, userId?: string) {
     const filter = this.buildMeiliFilter({});
+    const searchParams = {
+      ...(filter ? { filter } : {}),
+      limit,
+    };
     const [podcasts, episodes, channels, categories] = await Promise.all([
-      this.meiliClient!.index('podcasts').search<{ title: string }>(query, { filter, limit }),
-      this.meiliClient!.index('episodes').search<{ title: string }>(query, { filter, limit }),
-      this.meiliClient!.index('channels').search<{ name: string }>(query, { filter, limit }),
-      this.meiliClient!.index('categories').search<{ name: string }>(query, { filter, limit }),
+      this.meiliClient!.index('podcasts').search<{ title: string }>(query, searchParams),
+      this.meiliClient!.index('episodes').search<{ title: string }>(query, searchParams),
+      this.meiliClient!.index('channels').search<{ name: string }>(query, searchParams),
+      this.meiliClient!.index('categories').search<{ name: string }>(query, searchParams),
     ]);
 
     const suggestions = new Set<string>();
